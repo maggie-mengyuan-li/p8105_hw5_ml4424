@@ -12,7 +12,7 @@ library(tidyverse)
 library(utils)
 library(ggplot2)
 
-homicides_dta = read_csv("data/homicide-data.csv")
+homicides_dta = read_csv("p1_data/homicide-data.csv")
 homicides_dta
 ```
 
@@ -20,22 +20,91 @@ homicides_dta
 
 ```{r create city_state and summarize within cities}
 homicides_dta = homicides_dta %>% 
-  unite("city_state", sep = ", ", city:state) %>%
-  mutate(solved_status = case_when(disposition == 
-                                     "Closed by arrest" ~ "solved",
-                                   disposition == 
-                                     "Closed without arrest" ~ "unsolved",
-                                   disposition == 
-                                     "Open/No arrest" ~ "unsolved")) %>% 
-  group_by(city_state, solved_status) %>% 
-  summarize(total_hom = n()) # summarize within cities AND by solved/unsolved
+  unite("city_state", sep = "_", city:state) %>%
+  mutate(solved_status = case_when(disposition == "Closed by arrest" ~ "solved",
+                                   disposition ==  "Closed without arrest" ~ "unsolved",
+                                   disposition == "Open/No arrest" ~ "unsolved")) %>% 
+  select(city_state, solved_status) %>% 
+  filter(city_state != "Tulsa_AL")
+
+# View distribution of total and unsolved in all cities
+agg_hom_df = 
+  homicides_dta %>% 
+  group_by(city_state) %>%
+  summarize(hom_total = n(),
+            hom_unsolved = sum(solved_status == "unsolved"))
 
 ```
 
 ```{r prop.test for unsolved Bmore murders}
-bmore = homicides_dta %>% 
-  filter(city_state == "Baltimore, MD")
-table(bmore$solved_status) 
-bmore_unsolved = prop.test(bmore, )
+prop.test(agg_hom_df %>% filter(city_state == "Baltimore_MD") %>% pull(hom_unsolved),
+          agg_hom_df %>% filter(city_state == "Baltimore_MD") %>% pull(hom_total)) %>% 
+  broom::tidy()
+
+```
+
+```{r prop.test iteration}
+
+prop.test(agg_hom_df %>% pull(hom_unsolved),
+          agg_hom_df %>% pull(hom_total)) %>% 
+  broom::tidy()
+
+# note: map is for loop alternative
+results_df = agg_hom_df %>% 
+  mutate(
+    prop_tests = map2(.x = hom_unsolved, .y = hom_total, ~prop.test(x = .x, n = .y)), # looping first arg
+    tidy_tests = map(.x = prop_tests, ~broom::tidy(.x)) # looping second arg; tibble within tibble in nested format
+  ) %>% 
+  select(-prop_tests) %>% 
+  unnest(tidy_tests) %>% #view unnested version of tidy_test tibble
+  select(city_state, estimate, conf.low, conf.high)
+```
+
+```{r}
+results_df %>% 
+  mutate(city_state = fct_reorder(city_state, estimate)) %>% 
+  ggplot(aes(x = city_state, y = estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high)) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+## Problem 2
+
+```{r read in data in a loop}
+study_df = tibble(path = list.files("p2_data")) %>% 
+  mutate(path = str_c("p2_data/", path), # need full relative path name
+         data = map(.x = path, ~read_csv(.x))) %>% 
+  unnest(data) # unnest data for readability
+
+study_df
+
+```
+
+```{r tidy study data}
+study_df = study_df %>% 
+  mutate(id = row_number(),
+         arm = case_when(str_detect(path, "con") ~ "control",
+                         str_detect(path, "exp") ~ "experimental")) %>% 
+  pivot_longer(week_1:week_8,
+               names_to = "week",
+               values_to = "observation") %>% 
+  mutate(week = as.numeric(str_sub(week, -1))) %>% 
+  select(id, arm, week, observation)
+
+```
+
+```{r spaghetti plot}
+study_df %>% 
+  ggplot(aes(x = week, y = observation, group = id, color = arm)) +
+  geom_line()
+```
+
+*Comments*: From visual inspection of the plot, it appears that the experimental arm of the longitudinal study has higher observed values on average than the control arm. However, there is overlap between the two groups in the first 7 weeks or so, with certain individuals in the control arm having higher observed values than the experimental arm. Whether any differences between the two arms is statistically significant would have to be additionally verified.
+
+## Problem 3
+
+```{r}
+
 ```
 
