@@ -1,0 +1,41 @@
+---
+title: "p8105_hw5_ml4424.Rmd"
+author: "Maggie Li (ml4424)"
+date: "11/16/2020"
+output: github_document
+---
+
+## Problem 1
+
+```{r load libraries and data}
+library(tidyverse)
+library(utils)
+library(ggplot2)
+
+homicides_dta = read_csv("data/homicide-data.csv")
+homicides_dta
+```
+
+*Description*: The data are organized with a unique identifier, the date of homicide (Y-M-D), victim's full name, age, race, sex, the city and state in which the homicide occurred, the latitude and longitude of the homicide, and the disposition (status) of the homicide case.
+
+```{r create city_state and summarize within cities}
+homicides_dta = homicides_dta %>% 
+  unite("city_state", sep = ", ", city:state) %>%
+  mutate(solved_status = case_when(disposition == 
+                                     "Closed by arrest" ~ "solved",
+                                   disposition == 
+                                     "Closed without arrest" ~ "unsolved",
+                                   disposition == 
+                                     "Open/No arrest" ~ "unsolved")) %>% 
+  group_by(city_state, solved_status) %>% 
+  summarize(total_hom = n()) # summarize within cities AND by solved/unsolved
+
+```
+
+```{r prop.test for unsolved Bmore murders}
+bmore = homicides_dta %>% 
+  filter(city_state == "Baltimore, MD")
+table(bmore$solved_status) 
+bmore_unsolved = prop.test(bmore, )
+```
+
