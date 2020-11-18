@@ -40,7 +40,6 @@ agg_hom_df =
 prop.test(agg_hom_df %>% filter(city_state == "Baltimore_MD") %>% pull(hom_unsolved),
           agg_hom_df %>% filter(city_state == "Baltimore_MD") %>% pull(hom_total)) %>% 
   broom::tidy()
-
 ```
 
 ```{r prop.test iteration}
@@ -53,8 +52,7 @@ prop.test(agg_hom_df %>% pull(hom_unsolved),
 results_df = agg_hom_df %>% 
   mutate(
     prop_tests = map2(.x = hom_unsolved, .y = hom_total, ~prop.test(x = .x, n = .y)), # looping first arg
-    tidy_tests = map(.x = prop_tests, ~broom::tidy(.x)) # looping second arg; tibble within tibble in nested format
-  ) %>% 
+    tidy_tests = map(.x = prop_tests, ~broom::tidy(.x))) %>%  # looping second arg; tibble within tibble in nested format
   select(-prop_tests) %>% 
   unnest(tidy_tests) %>% #view unnested version of tidy_test tibble
   select(city_state, estimate, conf.low, conf.high)
@@ -102,9 +100,111 @@ study_df %>%
 
 *Comments*: From visual inspection of the plot, it appears that the experimental arm of the longitudinal study has higher observed values on average than the control arm. However, there is overlap between the two groups in the first 7 weeks or so, with certain individuals in the control arm having higher observed values than the experimental arm. Whether any differences between the two arms is statistically significant would have to be additionally verified.
 
-## Problem 3
+## Problem 3 
 
-```{r}
+```{r generate datasets from normal distribution and run t-test}
+set.seed(12345) # for reproducibility
+
+# write out function to simulate data, run t-test on data, and return mu-hat and t-test p-value for each dataset 
+
+sim_mean_p = function(n = 30, mu_test = 0, sigma = 5, sims = 5000) { ## set var name to mu_test due to overlapping name with t.test mu argument
+  sim_list = list() # empty list to store simulation data
+  t_list = list() # empty list to store t test data
+  
+  for (i in 1:sims){ # simulate data 5000 times in loop
+    sim_list[[i]] = tibble(
+    x = rnorm(n, mean = mu_test, sd = sigma)) 
+    
+    t_list[[i]] = t.test(sim_list[[i]], mu = 0) %>% # run t test on each simulated dataset
+    broom::tidy() %>% # obtain estimate and p-value
+    select(estimate, p.value) 
+  } 
+  
+  t_results = bind_rows(t_list) %>% # return the table of mu_hats (estimate) and p-values
+    mutate(mu = mu_test) # id column for the mu_test value 0 thru 6
+  t_results  
+}
+
+# test for mu = 0
+set.seed(12345)
+sim_mean_p(mu_test = 1, sims = 100) %>%
+  mutate(null_rej = case_when(
+           p.value <= 0.05 ~ 1,
+           p.value > 0.05 ~ 0
+         )) %>%
+  summarize(prop_rej = sum(null_rej)/n())
+
+# for loop to run this over mu = 0 to 6
+sim_many_mu = list(length(seq(0,6)))
+count = 0 # count variable to set as mu_test
+
+for (i in 1:length(seq(0,6))){
+  sim_many_mu[[i]] = sim_mean_p(mu_test = count) %>% 
+  mutate(null_rej = case_when(
+           p.value <= 0.05 ~ 1,
+           p.value > 0.05 ~ 0
+         )) # add column showing if null is rejected (binary)
+  count = count + 1
+}
+
+sim_many_mu #list of length 6, 5000 rows each
+
+# combine list into single df
+sim_many_mu_df = bind_rows(sim_many_mu) 
 
 ```
 
+```{r plot for proportion of times null was rejected}
+# summarize to get proportion of times null was rejected for each given mu, 0 thru 6
+null_rej_df = sim_many_mu_df %>% 
+  group_by(mu) %>% 
+  summarize(prop_rej = sum(null_rej)/n())
+
+null_rej_df
+
+# barplot
+null_rej_df %>% 
+  ggplot(aes(x = as.character(mu), y = prop_rej)) +
+  theme_linedraw() +
+  geom_bar(stat="identity") +
+  scale_y_continuous(labels = function(x) paste0(x*100, "%")) + #change y-axis to percent
+  labs(x = expression(paste("True ", mu)),
+       y = expression(paste("Percentage of times ", H[0], " was rejected")))
+```
+*Description*: As the true underlying effect size increases, the probability of rejecting the null hypothesis increases. The probability of rejecting the null hypothesis when the true effect size is 0 is roughly the Type 1 error rate (i.e. $\alpha$ = 0.05, the probability of rejecting the null hypothesis given that it is true, which is the case for $\mu$ = 0). The statistical power for detecting an effect when $\mu$ = 1 to 6 increases exponentially as $\mu$ increases in increments of 1 unit, and approaches close to 100% when $\mu$ equals 4.
+
+```{r plot estimates of mu and true value of mu}
+# df of avg estimates of mu based on all sims
+avg_est_df = sim_many_mu_df %>% 
+  group_by(mu) %>% 
+  summarize(avg_est = sum(estimate)/n())
+
+# df of avg estimates only in samples for which null was rejected
+avg_est_nullrej_df = sim_many_mu_df %>% 
+  filter(p.value <= 0.05) %>% 
+  group_by(mu) %>% 
+  summarize(avg_est_nullrej = sum(estimate)/n())
+
+# join into one table
+avg_est_all = inner_join(avg_est_df, avg_est_nullrej_df) 
+
+# tidy data
+avg_est_tidy = avg_est_all %>% 
+  pivot_longer(avg_est:avg_est_nullrej,
+               names_to = "est_type",
+               values_to = "estimate") 
+
+# plot as two lines on a line graph
+avg_est_tidy %>% 
+  ggplot() +
+  theme_linedraw() +
+  geom_line(aes(x = mu,
+             y= estimate,
+             color = est_type)) +
+  labs(x = expression(paste("True ", mu)),
+       y = expression(paste("Estimated ", hat(mu), " from simulations"))) 
+```
+
+*Description*: The sample average of $\hat\mu$ across tests for when the null is rejected is higher than their respective true values of $\mu$ for when the effect size is 0, 1, 2 and 3 (and slightly for 4). This is because the effect size that needs to be observed in order to reject the null for a given simulation has to be significantly further away from the null value ($H_0 = 0$). This difference (i.e. $\hat\mu - \mu$) needs to be greater when the underlying effect size is smaller to observe an effect. 
+
+Given the above, the difference is actually largest when the true $\mu$ equals 1 and 2, likely because when the $\hat\mu$ values are simulated from a true $\mu$ of 0, there are many negative $\hat\mu$ values that also reject the null that would make the sample average of $\hat\mu$ across these tests appear smaller in magnitude.
